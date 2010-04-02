@@ -25,44 +25,97 @@
 "--------------------------------------------------------------------------------
 
 " Mappings excluding line below.
-onoremap <silent>ai :<C-u>cal TextObject(0, 0, [line("."), line("."), col("."), col(".")])<CR>
-onoremap <silent>ii :<C-u>cal TextObject(1, 0, [line("."), line("."), col("."), col(".")])<CR>
-vnoremap <silent>ai :<C-u>cal TextObject(0, 0, [line("'<"), line("'>"), col("'<"), col("'>")])<CR><Esc>gv
-vnoremap <silent>ii :<C-u>cal TextObject(1, 0, [line("'<"), line("'>"), col("'<"), col("'>")])<CR><Esc>gv
+onoremap <silent>ai :<C-u>cal <Sid>HandleTextObjectMapping(0, 0, 0, [line("."), line("."), col("."), col(".")])<CR>
+onoremap <silent>ii :<C-u>cal <Sid>HandleTextObjectMapping(1, 0, 0, [line("."), line("."), col("."), col(".")])<CR>
+vnoremap <silent>ai :<C-u>cal <Sid>HandleTextObjectMapping(0, 0, 1, [line("'<"), line("'>"), col("'<"), col("'>")])<CR><Esc>gv
+vnoremap <silent>ii :<C-u>cal <Sid>HandleTextObjectMapping(1, 0, 1, [line("'<"), line("'>"), col("'<"), col("'>")])<CR><Esc>gv
 
 " Mappings including line below.
-onoremap <silent>aI :<C-u>cal TextObject(0, 1, [line("."), line("."), col("."), col(".")])<CR>
-onoremap <silent>iI :<C-u>cal TextObject(1, 1, [line("."), line("."), col("."), col(".")])<CR>
-vnoremap <silent>aI :<C-u>cal TextObject(0, 1, [line("'<"), line("'>"), col("'<"), col("'>")])<CR><Esc>gv
-vnoremap <silent>iI :<C-u>cal TextObject(1, 1, [line("'<"), line("'>"), col("'<"), col("'>")])<CR><Esc>gv
+onoremap <silent>aI :<C-u>cal <Sid>HandleTextObjectMapping(0, 1, 0, [line("."), line("."), col("."), col(".")])<CR>
+onoremap <silent>iI :<C-u>cal <Sid>HandleTextObjectMapping(1, 1, 0, [line("."), line("."), col("."), col(".")])<CR>
+vnoremap <silent>aI :<C-u>cal <Sid>HandleTextObjectMapping(0, 1, 1, [line("'<"), line("'>"), col("'<"), col("'>")])<CR><Esc>gv
+vnoremap <silent>iI :<C-u>cal <Sid>HandleTextObjectMapping(1, 1, 1, [line("'<"), line("'>"), col("'<"), col("'>")])<CR><Esc>gv
 
-function! TextObjectCount(inner, incbelow, range, count)
+let s:l0 = -1
+let s:l1 = -1
+let s:c0 = -1
+let s:c1 = -1
+
+function! <Sid>TextObject(inner, incbelow, vis, range, count)
 
 	" Record the current state of the visual region.
-	let l0 = a:range[0]
-	let l1 = a:range[1]
-	let c0 = a:range[2]
-	let c1 = a:range[3]
+	let vismode = "v"
+	if a:vis
+		let vismode = visualmode() 
+	endif
+
+	" Detect if this is a completely new visual selction session.
+	let new_vis = 0
+	let new_vis = new_vis || s:l0 != a:range[0]
+	let new_vis = new_vis || s:l1 != a:range[1]
+	let new_vis = new_vis || s:c0 != a:range[2]
+	let new_vis = new_vis || s:c1 != a:range[3]
+
+	let s:l0 = a:range[0]
+	let s:l1 = a:range[1]
+	let s:c0 = a:range[2]
+	let s:c1 = a:range[3]
 
 	" Repeatedly increase the scope of the selection.
+	let itr_cnt = 0
 	let cnt = a:count
 	while cnt > 0
 
 		" Look for the minimum indentation in the current visual region.
-		let idnt = 1000
-		let l = l0
-		while l <= l1
-			let idnt = min([idnt, indent(l)])
+		let l = s:l0
+		let idnt_invalid = 1000
+		let idnt = idnt_invalid
+		while l <= s:l1
+			if !(getline(l) =~ "^\\s*$")
+				let idnt = min([idnt, indent(l)])
+			endif
 			let l += 1
 		endwhile
 
+		" Keep track of where the range should be expanded to.
+		let l_1 = s:l0
+		let l_1o = l_1
+		let l2 = s:l1
+		let l2o = l2
+
+		" If we are highlighting only blank lines, we may not have found a
+		" valid indent. In this case we need to look for the next and previous
+		" non blank lines and check which of those has the largest indent.
+		if idnt == idnt_invalid
+			let idnt = 0
+			let pnb = prevnonblank(s:l0)
+			if pnb
+				let idnt = max([idnt, indent(pnb)])
+				let l_1 = pnb
+			endif
+			let nnb = nextnonblank(s:l0)
+			if nnb
+				let idnt = max([idnt, indent(nnb)])
+			endif
+
+			" If we are in whitespace at the beginning of a block, skip over
+			" it when we are selecting the range. Similarly, if we are in
+			" whitespace at the end, ignore it.
+			if idnt > indent(pnb)
+				let l_1 = nnb
+			endif
+			if idnt > indent(nnb)
+				let l2 = pnb
+			endif
+		endif
+
 		" Search backward for the first line with less indent than the target
 		" indent (skipping blank lines).
-		let l_1 = l0
-		let l_1o = l_1
-		let blnk = 0
+		let blnk = getline(l_1) =~ "^\\s*$"
 		while l_1 > 0 && ((idnt == 0 && !blnk) || (idnt != 0 && (blnk || indent(l_1) >= idnt)))
-			let l_1o = l_1
+			if !blnk || !a:inner
+				let l_1o = l_1
+			endif
 			let l_1 -= 1
 			let blnk = getline(l_1) =~ "^\\s*$"
 		endwhile
@@ -70,11 +123,11 @@ function! TextObjectCount(inner, incbelow, range, count)
 		" Search forward for the first line with more indent than the target
 		" indent (skipping blank lines).
 		let line_cnt = line("$")
-		let l2 = l1
-		let l2o = l2
-		let blnk = 0
+		let blnk = getline(l2) =~ "^\\s*$"
 		while l2 <= line_cnt && ((idnt == 0 && !blnk) || (idnt != 0 && (blnk || indent(l2) >= idnt)))
-			let l2o = l2
+			if !blnk || !a:inner
+				let l2o = l2
+			endif
 			let l2 += 1
 			let blnk = getline(l2) =~ "^\\s*$"
 		endwhile
@@ -93,21 +146,41 @@ function! TextObjectCount(inner, incbelow, range, count)
 		let l2 = min([l2, line("$")])
 
 		" Extend the columns to the start and end.
+		" If inner is selected, set the final cursor pos to the start
+		" of the text in the line.
 		let c_1 = 1
+		if a:inner
+			let c_1 = match(getline(l_1), "\\S") + 1
+		endif
 		let c2 = len(getline(l2))
+		if !a:inner
+			let c2 += 1
+		endif
+
+		" Make sure there's no change if we haven't really made a
+		" significant change in linewise mode - this makes sure that
+		" we can iteratively increase selection in linewise mode.
+		if itr_cnt == 0 && vismode == 'V' && s:l0 == l_1 && s:l1 == l2
+			let c_1 = s:c0
+			let c2 = s:c1
+		endif
 
 		" Check whether the visual region has changed.
 		let chg = 0
-		let chg = chg || l0 != l_1
-		let chg = chg || l1 != l2
-		let chg = chg || c0 != c_1
-		let chg = chg || c1 != c2
+		let chg = chg || s:l0 != l_1
+		let chg = chg || s:l1 != l2
+		let chg = chg || s:c0 != c_1
+		let chg = chg || s:c1 != c2
+
+		if vismode == 'V' && new_vis
+			let chg = 1
+		endif
 
 		" Update the vars.
-		let l0 = l_1
-		let l1 = l2
-		let c0 = c_1
-		let c1 = c2
+		let s:l0 = l_1
+		let s:l1 = l2
+		let s:c0 = c_1
+		let s:c1 = c2
 
 		" If there was no change, then don't decrement the count (it didn't
 		" count because it didn't do anything).
@@ -118,25 +191,37 @@ function! TextObjectCount(inner, incbelow, range, count)
 			" will have the effect of getting the enclosing block. Do it at
 			" the beginning rather than the end - the beginning is very likely
 			" to be only one indentation level different.
-			if l0 == 0
+			if s:l0 == 0
 				return
 			endif
-			let c0 -= 1
-			if c0 == 0
-				let l0 -= 1
-				let c0 = len(getline(l0))
-			endif
+			let s:l0 -= 1
+			let s:c0 = len(getline(s:l0))
 		endif
+
+		let itr_cnt += 1
 
 	endwhile
 
-	" Apply the range we have found.
-	call cursor(l0, c0)
-	normal! v
-	call cursor(l1, c1)
+	" Apply the range we have found. Make sure to use the current visual mode.
+	call cursor(s:l0, s:c0)
+	exe "normal! " . vismode
+	call cursor(s:l1, s:c1)
+	normal! o
+
+	" Update these static variables - we need to keep these up-to-date between
+	" invocations because it's the only way we can detect whether it's a new
+	" visual mode. We need to know if it's a new visual mode because otherwise
+	" if there's a single line block in visual line mode and we select it with
+	" "V", we can't tell whether it's already been selected using Vii.
+	exe "normal! \<Esc>"
+	let s:l0 = line("'<")
+	let s:l1 = line("'>")
+	let s:c0 = col("'<")
+	let s:c1 = col("'>")
+	normal gv
 
 endfunction
 
-function! TextObject(inner, incbelow, range)
-	call TextObjectCount(a:inner, a:incbelow, a:range, v:count1)
+function! <Sid>HandleTextObjectMapping(inner, incbelow, vis, range)
+	call <Sid>TextObject(a:inner, a:incbelow, a:vis, a:range, v:count1)
 endfunction
